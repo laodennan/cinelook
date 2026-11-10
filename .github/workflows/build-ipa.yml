@@ -1,0 +1,61 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Unpack app sources
+        run: |
+          mkdir -p src-root
+          unzip -o app-src.zip -d src-root
+          find src-root -type f | sort
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: src-root
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        working-directory: src-root
+        run: |
+          xcodebuild -project CineLook.xcodeproj -scheme CineLook \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package IPA
+        working-directory: src-root
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/CineLook.app Payload/
+          zip -qry CineLook-unsigned.ipa Payload
+          ls -la CineLook-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CineLook-unsigned-ipa
+          path: src-root/CineLook-unsigned.ipa
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="build-${{ github.run_number }}"
+          gh release create "$TAG" src-root/CineLook-unsigned.ipa \
+            --title "CineLook $TAG" \
+            --notes "Unsigned IPA, build ${{ github.run_number }} (commit ${{ github.sha }}). Sign it yourself before installing."
